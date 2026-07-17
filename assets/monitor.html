@@ -1,0 +1,2251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>桥接任务控制台</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --black: #020607;
+      --surface: rgba(5, 15, 18, .9);
+      --surface-high: rgba(8, 22, 26, .95);
+      --line: rgba(117, 199, 198, .15);
+      --line-hot: rgba(117, 229, 220, .38);
+      --ink: #e5f4f1;
+      --text: #bfd4d0;
+      --muted: #6e8985;
+      --dim: #405c59;
+      --cyan: #64e4d4;
+      --cyan-hot: #a8fff3;
+      --blue: #6eb3e8;
+      --green: #6bd9a5;
+      --amber: #f0bf68;
+      --red: #f27d76;
+      --violet: #ac9ae6;
+      --claude: #f2a04b;
+      --claude-hot: #ffc477;
+      --mono: "Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      --sans: "Segoe UI Variable", "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      color: var(--ink);
+      background: var(--black);
+    }
+
+    body {
+      font-family: var(--sans);
+      background:
+        radial-gradient(circle at 50% -20%, rgba(74, 184, 174, .1), transparent 38rem),
+        linear-gradient(180deg, #03090b, #010405 78%);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+      opacity: .1;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 3px,
+        rgba(117, 229, 220, .055) 4px
+      );
+      mix-blend-mode: screen;
+    }
+
+    button, input, select { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+
+    .shell {
+      width: min(1840px, 100%);
+      height: 100vh;
+      min-height: 680px;
+      margin: 0 auto;
+      overflow: hidden;
+      border-inline: 1px solid var(--line);
+      background: rgba(2, 7, 9, .88);
+      box-shadow: 0 0 110px rgba(0, 0, 0, .8);
+    }
+
+    .header {
+      display: grid;
+      grid-template-columns: minmax(390px, 1fr) auto;
+      height: 72px;
+      border-bottom: 1px solid var(--line-hot);
+      background: rgba(3, 10, 12, .97);
+      transition: border-color .2s ease, box-shadow .2s ease;
+    }
+
+    body.awaiting-input .header {
+      border-bottom-color: rgba(240, 191, 104, .7);
+      box-shadow: inset 0 -1px rgba(240, 191, 104, .28);
+    }
+    body.user-stopped .header {
+      border-bottom-color: rgba(242, 125, 118, .72);
+      box-shadow: inset 0 -1px rgba(242, 125, 118, .32);
+    }
+    body.user-stopped .state { color: var(--red) !important; }
+
+    .identity {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-width: 0;
+      padding: 0 20px;
+    }
+
+    .bridge-mark {
+      width: 72px;
+      height: 48px;
+      flex: 0 0 auto;
+      overflow: visible;
+      filter: drop-shadow(0 0 11px rgba(100, 228, 212, .16));
+    }
+
+    .bridge-mark .core.claude {
+      fill: var(--claude);
+      filter: drop-shadow(0 0 4px rgba(242, 160, 75, .72));
+    }
+
+    .bridge-mark .core.codex {
+      fill: var(--cyan);
+      filter: drop-shadow(0 0 4px rgba(100, 228, 212, .72));
+    }
+
+    .bridge-mark .spoke {
+      stroke: #ffd19c;
+      stroke-width: 1.25;
+      stroke-linecap: round;
+      transform-origin: 14px 21px;
+      animation: rotate-core 8s linear infinite;
+    }
+
+    .bridge-mark .node-halo {
+      fill: none;
+      stroke-width: .55;
+      stroke-dasharray: 1 2.6;
+      opacity: .45;
+    }
+
+    .bridge-mark .node-halo.claude {
+      stroke: var(--claude);
+      filter: drop-shadow(0 0 4px rgba(242, 160, 75, .38));
+    }
+
+    .bridge-mark .node-halo.codex {
+      stroke: var(--cyan);
+      filter: drop-shadow(0 0 4px rgba(100, 228, 212, .38));
+    }
+
+    .bridge-mark .codex-glyph {
+      fill: none;
+      stroke: var(--cyan-hot);
+      stroke-width: 1.45;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transform-origin: 48px 21px;
+      animation: rotate-core 6s linear infinite reverse;
+      filter: drop-shadow(0 0 4px rgba(100, 228, 212, .58));
+    }
+
+    .bridge-mark .flow {
+      fill: none;
+      stroke-width: 1.05;
+      stroke-linecap: round;
+      stroke-dasharray: 4 3;
+      animation: flow-dash 1.4s linear infinite;
+      will-change: stroke-dashoffset;
+    }
+
+    .bridge-mark .flow.orange {
+      stroke: var(--claude);
+      filter: drop-shadow(0 0 3px rgba(242, 160, 75, .55));
+    }
+
+    .bridge-mark .flow.cyan {
+      stroke: var(--cyan);
+      filter: drop-shadow(0 0 3px rgba(100, 228, 212, .55));
+      animation-direction: reverse;
+    }
+
+    .bridge-mark .orbit,
+    .bridge-mark .orbit-loop {
+      fill: none;
+      stroke-width: .6;
+      stroke-linecap: round;
+      stroke-dasharray: 1 3;
+      animation: orbit-dash 4s linear infinite;
+      will-change: stroke-dashoffset;
+    }
+
+    .bridge-mark .orbit { opacity: .78; }
+    .bridge-mark .orbit.top { stroke: url(#bridgeOrbitTop); }
+    .bridge-mark .orbit.bottom {
+      stroke: url(#bridgeOrbitBottom);
+      animation-direction: reverse;
+    }
+    .bridge-mark .orbit-loop {
+      stroke: rgba(100, 228, 212, .34);
+      filter: drop-shadow(0 0 3px rgba(100, 228, 212, .26));
+    }
+
+    .bridge-mark .particle.orange {
+      fill: #ffc477;
+      filter: drop-shadow(0 0 4px var(--claude));
+    }
+    .bridge-mark .particle.cyan {
+      fill: #a8fff3;
+      filter: drop-shadow(0 0 4px var(--cyan));
+    }
+
+    .task { min-width: 0; }
+    .task strong {
+      display: block;
+      overflow: hidden;
+      color: var(--ink);
+      font-size: 18px;
+      font-weight: 780;
+      letter-spacing: .015em;
+      text-overflow: ellipsis;
+      text-shadow: 0 0 18px rgba(196, 246, 238, .11);
+      white-space: nowrap;
+    }
+    .task span {
+      display: block;
+      overflow: hidden;
+      margin-top: 7px;
+      color: #6e9b98;
+      font: 11px/1.2 var(--mono);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .header-grid { display: flex; align-items: stretch; }
+    .header-cell {
+      display: grid;
+      align-content: center;
+      min-width: 102px;
+      padding: 0 14px;
+      border-left: 1px solid var(--line);
+    }
+    .header-cell.model-cell { min-width: 190px; }
+    .header-cell label {
+      color: #5f8885;
+      font-size: 11px;
+      font-weight: 780;
+      letter-spacing: .075em;
+      white-space: nowrap;
+    }
+    .header-cell b {
+      display: block;
+      margin-top: 9px;
+      color: #e0f0ed;
+      font: 720 14px/1 var(--mono);
+      letter-spacing: -.015em;
+      white-space: nowrap;
+    }
+    .state {
+      display: flex !important;
+      align-items: center;
+      gap: 8px;
+      color: var(--cyan) !important;
+    }
+    .state::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 13px currentColor;
+      animation: glow 1.6s ease-in-out infinite;
+    }
+    body.awaiting-input .state { color: var(--amber) !important; }
+    .model-live { transition: color .2s ease, text-shadow .2s ease; }
+    .model-live.changed {
+      color: var(--cyan-hot);
+      text-shadow: 0 0 12px rgba(100, 228, 212, .5);
+    }
+
+    .telemetry {
+      display: grid;
+      grid-template-columns: 1.18fr repeat(5, 1fr);
+      height: 108px;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(100, 228, 212, .035), transparent 32%),
+        rgba(4, 12, 14, .84);
+    }
+    .telemetry-item {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      padding: 11px 15px 8px;
+      border-right: 1px solid var(--line);
+    }
+    .telemetry-item:last-child { border-right: 0; }
+    .metric-head {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .06em;
+      white-space: nowrap;
+    }
+    .metric-head span:last-child {
+      color: var(--dim);
+      font: 9px/1 var(--mono);
+    }
+    .metric-value {
+      position: relative;
+      z-index: 2;
+      margin-top: 8px;
+      font: 650 27px/.94 var(--mono);
+      letter-spacing: -.065em;
+      white-space: nowrap;
+    }
+    .metric-value small {
+      margin-left: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0;
+    }
+    .metric-sub {
+      position: relative;
+      z-index: 2;
+      margin-top: 6px;
+      overflow: hidden;
+      color: var(--muted);
+      font: 10px/1.25 var(--mono);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .metric-chart {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 42px;
+      opacity: .78;
+    }
+    .metric-chart .grid {
+      stroke: rgba(117, 199, 198, .06);
+      stroke-width: 1;
+      vector-effect: non-scaling-stroke;
+    }
+    .metric-chart .area { fill: url(#chartArea); stroke: none; }
+    .metric-chart .line {
+      fill: none;
+      stroke: var(--cyan);
+      stroke-width: 1.45;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+      filter: drop-shadow(0 0 3px rgba(100, 228, 212, .26));
+    }
+    .metric-chart .point {
+      fill: var(--cyan-hot);
+      filter: drop-shadow(0 0 4px var(--cyan));
+    }
+
+    .body {
+      display: grid;
+      grid-template-columns: minmax(650px, 1fr) 354px;
+      height: calc(100vh - 180px);
+      min-height: 500px;
+    }
+    .stream-pane {
+      display: grid;
+      grid-template-rows: 54px minmax(0, 1fr) 32px;
+      min-width: 0;
+      min-height: 0;
+      border-right: 1px solid var(--line);
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(5, 14, 17, .74);
+    }
+    .tabs { display: flex; align-items: center; gap: 3px; }
+    .tab {
+      padding: 7px 10px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .tab.active {
+      color: var(--cyan-hot);
+      border-color: rgba(100, 228, 212, .2);
+      background: rgba(100, 228, 212, .055);
+    }
+    .tab:hover, .tab:focus-visible {
+      color: var(--ink);
+      border-color: var(--line-hot);
+      outline: none;
+    }
+    .search-wrap {
+      position: relative;
+      min-width: 180px;
+      max-width: 360px;
+      flex: 1;
+      margin-left: auto;
+    }
+    .search-wrap::before {
+      content: "⌕";
+      position: absolute;
+      top: 50%;
+      left: 9px;
+      color: var(--dim);
+      font: 12px/1 var(--mono);
+      transform: translateY(-50%);
+    }
+    .search {
+      width: 100%;
+      height: 31px;
+      padding: 0 10px 0 27px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      outline: none;
+      color: var(--text);
+      background: rgba(1, 6, 7, .58);
+      font-size: 11px;
+    }
+    .search:focus { border-color: var(--line-hot); }
+    .search::placeholder { color: var(--dim); }
+
+    .feed {
+      position: relative;
+      overflow: auto;
+      padding: 16px 20px 25px 50px;
+      scrollbar-color: #193336 transparent;
+      scrollbar-width: thin;
+    }
+    .feed::before {
+      content: "";
+      position: absolute;
+      top: 19px;
+      bottom: 18px;
+      left: 26px;
+      width: 1px;
+      background: linear-gradient(var(--cyan), rgba(100, 228, 212, .07) 74%, transparent);
+    }
+    .event {
+      position: relative;
+      margin-bottom: 15px;
+    }
+    .event.hidden { display: none; }
+    .event::before {
+      content: "";
+      position: absolute;
+      top: 14px;
+      left: -29px;
+      width: 8px;
+      height: 8px;
+      border: 2px solid #061014;
+      border-radius: 50%;
+      background: var(--dim);
+      box-shadow: 0 0 0 1px rgba(110, 137, 133, .3);
+    }
+    .event[data-kind="claude"]::before {
+      background: var(--claude);
+      box-shadow: 0 0 12px rgba(242, 160, 75, .56);
+    }
+    .event[data-kind="tool"]::before { background: var(--blue); }
+    .event[data-kind="codex"]::before { background: var(--violet); }
+    .event[data-kind="error"]::before { background: var(--red); }
+    .event[data-level="warning"]::before { background: var(--amber); }
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font: 10px/1.2 var(--mono);
+    }
+    .meta strong {
+      color: #c4d8d4;
+      font-size: 11px;
+      letter-spacing: .06em;
+    }
+    .event[data-kind="claude"] .meta strong { color: var(--claude-hot); }
+    .streaming {
+      display: none;
+      padding: 2px 6px;
+      border: 1px solid rgba(255, 255, 255, .72);
+      color: #fff;
+      background: rgba(255, 255, 255, .04);
+      font-size: 9px;
+    }
+    .event.is-streaming .streaming { display: inline-block; }
+    .message {
+      max-width: 1100px;
+      padding-left: 14px;
+      border-left: 1px solid rgba(100, 228, 212, .38);
+      color: #d1e2df;
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .event[data-kind="claude"] .message {
+      border-left-color: rgba(242, 160, 75, .5);
+    }
+    .event.is-streaming .message::after {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 1em;
+      margin-left: 5px;
+      vertical-align: -.12em;
+      background: var(--claude);
+      animation: blink .9s steps(1) infinite;
+    }
+    .event[data-kind="codex"].is-streaming .message::after {
+      background: var(--violet);
+    }
+    .command {
+      max-width: 1100px;
+      margin-top: 8px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: rgba(2, 8, 9, .58);
+    }
+    .command b {
+      display: block;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--blue);
+      background: rgba(8, 22, 25, .64);
+      font-size: 11px;
+    }
+    .command pre {
+      margin: 0;
+      padding: 11px 12px;
+      color: #b6c9c6;
+      font: 11px/1.55 var(--mono);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      cursor: copy;
+    }
+    .feed-status {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-width: 0;
+      padding: 0 13px;
+      border-top: 1px solid var(--line);
+      color: var(--dim);
+      background: rgba(3, 10, 12, .92);
+      font: 9px/1 var(--mono);
+    }
+    .feed-status span { white-space: nowrap; }
+    .feed-status .secure { color: var(--green); }
+    .feed-status .connection { margin-left: auto; }
+
+    .inspector {
+      min-width: 0;
+      height: 100%;
+      overflow: hidden;
+      background: rgba(4, 12, 14, .66);
+    }
+    .section {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+    }
+    .section-title strong {
+      color: #b4cac6;
+      font-size: 13px;
+      font-weight: 760;
+      letter-spacing: .06em;
+    }
+    .section-title span {
+      color: var(--dim);
+      font: 10px/1 var(--mono);
+    }
+    .control-panel {
+      background:
+        linear-gradient(135deg, rgba(100, 228, 212, .045), transparent 58%),
+        rgba(2, 9, 11, .78);
+    }
+    .control-grid {
+      display: grid;
+      grid-template-columns: 1.35fr .9fr;
+      gap: 8px;
+    }
+    .control-field {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .control-select {
+      width: 100%;
+      height: 32px;
+      min-width: 0;
+      padding: 0 25px 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      outline: none;
+      color: #d9ebe7;
+      background: #061013;
+      font: 650 10px/1 var(--mono);
+    }
+    .control-select:focus-visible {
+      border-color: var(--line-hot);
+      box-shadow: 0 0 0 2px rgba(100, 228, 212, .08);
+    }
+    .control-select:disabled { color: var(--dim); cursor: not-allowed; }
+    .control-effective {
+      margin: 8px 0 0;
+      overflow: hidden;
+      color: #81a19d;
+      font: 10px/1.45 var(--mono);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .control-note {
+      margin: 5px 0 0;
+      color: #a28e67;
+      font-size: 9px;
+      line-height: 1.35;
+    }
+    .control-resume {
+      margin: 8px 0 0;
+      padding: 7px 8px;
+      border-left: 2px solid var(--red);
+      color: #e0b1ad;
+      background: rgba(242, 125, 118, .045);
+      font: 9px/1.45 var(--mono);
+    }
+    .control-resume[hidden] { display: none; }
+    .control-actions {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 7px;
+      margin-top: 9px;
+    }
+    .control-button {
+      min-height: 32px;
+      padding: 6px 9px;
+      border: 1px solid var(--line-hot);
+      border-radius: 3px;
+      color: var(--cyan-hot);
+      background: rgba(100, 228, 212, .07);
+      font-size: 10px;
+      font-weight: 750;
+    }
+    .control-button:hover, .control-button:focus-visible {
+      border-color: var(--cyan);
+      background: rgba(100, 228, 212, .12);
+      outline: none;
+    }
+    .control-button.stop {
+      border-color: rgba(242, 125, 118, .42);
+      color: #ffaaa3;
+      background: rgba(242, 125, 118, .055);
+    }
+    .control-button.stop:hover, .control-button.stop:focus-visible {
+      border-color: var(--red);
+      background: rgba(242, 125, 118, .11);
+    }
+    .control-button:disabled {
+      border-color: var(--line);
+      color: var(--dim);
+      background: rgba(3, 9, 11, .48);
+      cursor: not-allowed;
+    }
+    .control-confirmation {
+      margin-top: 9px;
+      padding: 9px;
+      border: 1px solid rgba(240, 191, 104, .35);
+      color: #d8c291;
+      background: rgba(240, 191, 104, .055);
+    }
+    .control-confirmation[hidden] { display: none; }
+    .control-confirmation p {
+      margin: 0;
+      font-size: 10px;
+      line-height: 1.45;
+    }
+    .confirmation-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 7px;
+    }
+    .confirmation-actions .control-button { min-height: 28px; }
+    .phase-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 16px minmax(0, 1fr);
+      gap: 9px;
+      align-items: center;
+      min-height: 29px;
+    }
+    #phaseList { width: min(190px, 100%); margin-inline: auto; }
+    .phase-row::after {
+      content: "";
+      position: absolute;
+      top: 21px;
+      bottom: -8px;
+      left: 5px;
+      width: 1px;
+      background: var(--line);
+    }
+    .phase-row:last-child::after { display: none; }
+    .phase-row i {
+      width: 11px;
+      height: 11px;
+      border: 2px solid #081316;
+      border-radius: 50%;
+      background: var(--dim);
+      box-shadow: 0 0 0 1px var(--line);
+    }
+    .phase-row.current i {
+      background: var(--cyan);
+      box-shadow: 0 0 10px rgba(100, 228, 212, .65);
+    }
+    body.awaiting-input .phase-row.current i {
+      background: var(--amber);
+      box-shadow: 0 0 12px rgba(240, 191, 104, .7);
+    }
+    .phase-row b {
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 680;
+    }
+    .phase-row.current b { color: var(--cyan-hot); }
+    body.awaiting-input .phase-row.current b { color: var(--amber); }
+    .triple {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+    .number {
+      padding: 9px 5px;
+      background: rgba(2, 8, 9, .8);
+      text-align: center;
+    }
+    .number b {
+      display: block;
+      font: 700 20px/1 var(--mono);
+    }
+    .number span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .repo-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      margin-bottom: 7px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+    .repo-metric {
+      display: grid;
+      place-items: center;
+      gap: 3px;
+      min-width: 0;
+      padding: 5px 3px;
+      background: rgba(2, 8, 9, .9);
+    }
+    .repo-metric span {
+      color: var(--muted);
+      font-size: 9px;
+    }
+    .repo-metric b {
+      color: var(--text);
+      font: 720 13px/1 var(--mono);
+    }
+    .repo-metric.add b { color: var(--green); }
+    .repo-metric.del b { color: var(--red); }
+    .diff-bar {
+      display: flex;
+      height: 4px;
+      margin-bottom: 8px;
+      background: #142629;
+    }
+    .diff-bar .add { background: var(--green); }
+    .diff-bar .del { background: var(--red); }
+    .files {
+      display: grid;
+      gap: 5px;
+      color: #9bb0ac;
+      font: 10px/1.35 var(--mono);
+    }
+    .file {
+      display: grid;
+      grid-template-columns: 11px minmax(0, 1fr);
+      gap: 7px;
+      min-width: 0;
+    }
+    .file span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .review-alert {
+      display: none;
+      margin: 11px 16px;
+      padding: 12px 13px;
+      border: 1px solid rgba(240, 191, 104, .58);
+      color: #f7d795;
+      background: rgba(240, 191, 104, .085);
+      box-shadow: 0 0 22px rgba(240, 191, 104, .08);
+    }
+    body.awaiting-input .review-alert { display: block; }
+    .review-alert strong {
+      display: block;
+      font-size: 13px;
+      letter-spacing: .04em;
+    }
+    .review-alert p {
+      margin: 7px 0 0;
+      color: #c5ad7e;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .review-alert ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: #dcc38e;
+      font: 10px/1.55 var(--mono);
+    }
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 30;
+      padding: 10px 13px;
+      border: 1px solid var(--line-hot);
+      color: var(--cyan-hot);
+      background: rgba(3, 12, 14, .97);
+      font: 10px/1 var(--mono);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: .18s ease;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @keyframes flow-dash { to { stroke-dashoffset: -7; } }
+    @keyframes orbit-dash { to { stroke-dashoffset: -4; } }
+    @keyframes rotate-core { to { transform: rotate(360deg); } }
+    @keyframes glow {
+      0%, 100% { opacity: .55; }
+      50% { opacity: 1; }
+    }
+    @keyframes blink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+
+    @media (max-width: 1400px) {
+      .header { grid-template-columns: minmax(330px, 1fr) auto; }
+      .header-cell { min-width: 88px; padding-inline: 10px; }
+      .header-cell.model-cell { min-width: 164px; }
+      .task strong { font-size: 16px; }
+    }
+
+    @media (max-width: 1180px) {
+      html, body { overflow: auto; }
+      .shell { height: auto; min-height: 100vh; overflow: visible; }
+      .header { grid-template-columns: 1fr; height: auto; }
+      .identity { min-height: 72px; }
+      .header-grid { overflow-x: auto; border-top: 1px solid var(--line); }
+      .header-cell { min-height: 64px; }
+      .telemetry { grid-template-columns: repeat(3, 1fr); height: 196px; }
+      .telemetry-item:nth-child(n+4) { border-top: 1px solid var(--line); }
+      .body { height: 720px; grid-template-columns: minmax(0, 1fr) 330px; }
+    }
+
+    @media (max-width: 760px) {
+      .telemetry { grid-template-columns: repeat(2, 1fr); height: 294px; }
+      .body { height: auto; grid-template-columns: 1fr; }
+      .stream-pane { height: 680px; border-right: 0; }
+      .inspector { height: auto; }
+      .tabs .tab:nth-child(n+4) { display: none; }
+      .feed { padding-left: 42px; padding-right: 12px; }
+      .feed::before { left: 21px; }
+      .event::before { left: -26px; }
+    }
+
+    @media (max-height: 820px) and (min-width: 761px) {
+      .section { padding-block: 8px; }
+      .phase-row { min-height: 24px; }
+      .phase-row::after { top: 19px; bottom: -6px; }
+      .control-effective { margin-top: 6px; }
+      .control-actions { margin-top: 6px; }
+    }
+
+    /* Approved single-screen operations layout. */
+    :root {
+      --ui: "Microsoft YaHei UI", "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+      --data: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+      --transcript: "Cascadia Mono", "Microsoft YaHei UI", Consolas, monospace;
+    }
+    html, body { overflow: hidden; }
+    body {
+      font-family: var(--ui);
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(39, 183, 177, .12), transparent 30rem),
+        radial-gradient(circle at 92% 100%, rgba(50, 118, 164, .1), transparent 32rem),
+        #020709;
+    }
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .22;
+      background-image:
+        linear-gradient(rgba(100, 228, 212, .025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(100, 228, 212, .025) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: linear-gradient(to bottom, #000, transparent 78%);
+    }
+    .shell {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-rows: 116px minmax(0, 1fr);
+      width: min(1920px, 100%);
+      height: 100vh;
+      min-height: 700px;
+      overflow: hidden;
+    }
+    .header {
+      display: grid;
+      grid-template-columns: minmax(390px, .9fr) minmax(0, 2.7fr);
+      height: auto;
+      background:
+        linear-gradient(100deg, rgba(16, 61, 65, .3), transparent 33%),
+        rgba(3, 11, 13, .96);
+    }
+    .identity {
+      position: relative;
+      gap: 20px;
+      padding: 14px 24px;
+      overflow: hidden;
+      border-right: 1px solid var(--line);
+      background:
+        radial-gradient(circle at 15% 50%, rgba(100, 228, 212, .12), transparent 27%),
+        repeating-linear-gradient(90deg, transparent 0 45px, rgba(100, 228, 212, .025) 46px 47px);
+    }
+    .identity::after {
+      content: "";
+      position: absolute;
+      top: -74px;
+      right: -30px;
+      width: 210px;
+      height: 210px;
+      border: 1px solid rgba(100, 228, 212, .09);
+      border-radius: 50%;
+      box-shadow: 0 0 48px rgba(100, 228, 212, .035);
+    }
+    .bridge-mark { width: 92px; height: 64px; }
+    .task { position: relative; z-index: 1; }
+    .task strong {
+      font-family: var(--ui);
+      font-size: 22px;
+      font-weight: 820;
+      letter-spacing: .012em;
+    }
+    .task span { margin-top: 9px; font: 11.5px/1.2 var(--data); }
+    .header-grid {
+      display: grid;
+      grid-template-columns: .9fr 1.25fr 1.25fr .7fr 1.35fr .78fr;
+      min-width: 0;
+    }
+    .header-cell { text-align: center; }
+    .header-cell, .header-cell.model-cell {
+      justify-items: center;
+      min-width: 0;
+      padding: 0 17px;
+    }
+    .header-cell.status-cell { padding-inline: 10px; }
+    .header-cell label {
+      color: #719793;
+      font-family: var(--ui);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .025em;
+    }
+    .header-cell b {
+      margin-top: 10px;
+      max-width: 100%;
+      overflow: visible;
+      color: #e9f8f5;
+      font: 780 16px/1.15 var(--data);
+      overflow-wrap: anywhere;
+      text-overflow: clip;
+      white-space: normal;
+    }
+    .header-cell.model-cell b { font-size: clamp(12px, .83vw, 16px); }
+    .header-cell.progress-cell b { white-space: nowrap; }
+    .state { color: var(--blue) !important; font-size: 18px !important; }
+    .state { white-space: nowrap; }
+    .state { justify-content: center; }
+    body[data-phase="CLAUDE_RUNNING"] .state { color: var(--claude) !important; }
+    body[data-phase="CODEX_REVIEWING"] .state { color: var(--violet) !important; }
+    body[data-phase="PASS"] .state { color: var(--green) !important; }
+    body.awaiting-input .state { color: var(--amber) !important; }
+
+    .body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 640px;
+      height: auto;
+      min-height: 0;
+    }
+    .stream-pane {
+      grid-template-rows: 56px minmax(0, 1fr) 30px;
+      min-height: 0;
+    }
+    .toolbar {
+      gap: 10px;
+      padding: 0 18px;
+      background: linear-gradient(90deg, rgba(8, 26, 29, .94), rgba(3, 13, 15, .88));
+    }
+    .toolbar-title {
+      margin-right: 12px;
+      color: #d5eeea;
+      font-size: 16px;
+      font-weight: 820;
+      letter-spacing: .025em;
+      white-space: nowrap;
+    }
+    .tab { padding: 8px 12px; font-size: 12px; }
+    .search { height: 34px; font-size: 12px; }
+    .feed {
+      overflow: auto;
+      padding: 18px 28px 28px 54px;
+      scrollbar-color: #1c5555 transparent;
+    }
+    .feed::before { top: 22px; left: 28px; bottom: 24px; background: linear-gradient(var(--blue), rgba(88, 185, 255, .08)); }
+    .event { margin-bottom: 13px; }
+    .event::before { top: 17px; left: -31px; background: var(--blue); box-shadow: 0 0 10px rgba(88, 185, 255, .58); }
+    .event[data-kind="bridge"]::before,
+    .event[data-kind="tool"]::before { background: var(--blue); box-shadow: 0 0 10px rgba(88, 185, 255, .58); }
+    .event[data-kind="claude"]::before { background: var(--claude); box-shadow: 0 0 11px rgba(242, 160, 75, .66); }
+    .event[data-kind="codex"]::before { background: var(--violet); box-shadow: 0 0 11px rgba(172, 154, 230, .65); }
+    .meta { font: 10.5px/1.2 var(--data); }
+    .meta strong { font-family: var(--ui); font-size: 14px; letter-spacing: .015em; }
+    .message {
+      max-width: none;
+      padding: 13px 17px;
+      border: 1px solid rgba(60, 112, 112, .27);
+      border-left: 3px solid var(--blue);
+      color: #c5dbd7;
+      background: linear-gradient(120deg, rgba(7, 24, 28, .9), rgba(3, 12, 14, .78));
+      font: 13px/1.66 var(--transcript);
+    }
+    .event[data-kind="claude"] .message { border-left-color: var(--claude); }
+    .event[data-kind="codex"] .message { border-left-color: var(--violet); }
+    .command { max-width: none; }
+    .command b { font-family: var(--ui); font-size: 12px; }
+    .command pre { font: 12px/1.58 var(--data); }
+    .feed-status { height: 30px; font-size: 9.5px; }
+
+    .inspector {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: minmax(0, 1fr) 142px 112px;
+      min-height: 0;
+      overflow: hidden;
+      background: linear-gradient(155deg, rgba(6, 20, 23, .96), rgba(2, 9, 11, .98));
+    }
+    .telemetry {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: 38px minmax(0, 1fr);
+      height: auto;
+      min-height: 0;
+      padding: 13px 15px 15px;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+    }
+    .telemetry-title {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      color: #d1ece7;
+    }
+    .telemetry-title strong { font-size: 16px; font-weight: 820; }
+    .telemetry-title span { color: var(--dim); font: 10.5px/1 var(--data); }
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(3, minmax(0, 1fr));
+      gap: 9px;
+      min-height: 0;
+    }
+    .telemetry-item {
+      padding: 12px 13px;
+      border: 1px solid rgba(42, 104, 106, .48);
+      background: linear-gradient(145deg, rgba(8, 29, 33, .97), rgba(2, 12, 14, .97));
+      box-shadow: inset 0 1px rgba(121, 255, 239, .04), 0 8px 25px rgba(0, 0, 0, .15);
+    }
+    .metric-head { font-family: var(--ui); font-size: 12px; letter-spacing: .015em; }
+    .metric-head span:last-child { font: 9.5px/1 var(--data); }
+    .metric-value { margin-top: 8px; font: 820 29px/1 var(--data); font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+    .metric-value small { font: 700 10.5px/1 var(--data); }
+    .metric-sub { margin-top: 6px; font: 11px/1.25 var(--ui); }
+    .metric-chart { height: 58%; opacity: .88; }
+    .telemetry-item[data-series="cost"] .line { stroke: var(--claude); }
+    .telemetry-item[data-series="tools"] .line { stroke: var(--blue); }
+
+    .phase-panel { grid-column: 1; grid-row: 2; }
+    .tools-panel { grid-column: 2; grid-row: 2; }
+    .control-panel { grid-column: 1; grid-row: 3; }
+    .repo-section { grid-column: 2; grid-row: 3; }
+    .phase-panel, .control-panel { border-right: 1px solid var(--line); }
+    .section { min-height: 0; padding: 13px 16px; overflow: hidden; }
+    .section-title { margin-bottom: 11px; }
+    .section-title strong { font-size: 14.5px; font-weight: 820; letter-spacing: .02em; }
+    .section-title span { font: 10px/1 var(--data); }
+    .phase-row { min-height: 24px; font-family: var(--ui); }
+    .phase-row::after { top: 19px; bottom: -6px; }
+    .phase-row b { font-size: 11.5px; font-weight: 760; }
+    .phase-row.current[data-phase="INITIALIZING"] i { background: var(--green); }
+    .phase-row.current[data-phase="INITIALIZING"] b { color: var(--green); }
+    .phase-row.current[data-phase="CLAUDE_RUNNING"] i { background: var(--claude); box-shadow: 0 0 10px rgba(242, 160, 75, .65); }
+    .phase-row.current[data-phase="CLAUDE_RUNNING"] b { color: var(--claude-hot); }
+    .phase-row.current[data-phase="VERIFYING"] i { background: var(--blue); box-shadow: 0 0 10px rgba(88, 185, 255, .65); }
+    .phase-row.current[data-phase="VERIFYING"] b { color: #a9d9ff; }
+    .phase-row.current[data-phase="CODEX_REVIEWING"] i { background: var(--violet); box-shadow: 0 0 10px rgba(172, 154, 230, .68); }
+    .phase-row.current[data-phase="CODEX_REVIEWING"] b { color: #d3c8ff; }
+    .phase-row.current[data-phase="PASS"] i { background: var(--green); box-shadow: 0 0 9px rgba(107, 217, 165, .55); }
+    .phase-row.current[data-phase="PASS"] b { color: var(--green); }
+    .phase-row.current[data-phase="AWAITING_INPUT"] i { background: var(--amber); box-shadow: 0 0 11px rgba(240, 191, 104, .7); }
+    .phase-row.current[data-phase="AWAITING_INPUT"] b { color: var(--amber); }
+    .triple { height: 82px; }
+    .number { display: grid; align-content: center; padding: 8px 4px; }
+    .number b { font-size: 25px; }
+    .number span { font-size: 11px; }
+    .control-grid { grid-template-columns: 1.35fr .72fr; }
+    .control-panel, .repo-section { padding-block: 6px; }
+    .control-panel .section-title, .repo-section .section-title { margin-bottom: 4px; }
+    .control-field { gap: 0; font-size: 0; }
+    .control-select { height: 31px; font-size: 11px; }
+    .control-effective, .control-note { display: none; }
+    .control-actions { margin-top: 5px; }
+    .control-button { min-height: 29px; font-size: 11px; }
+    .files { display: none; }
+    .repo-runtime {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+    .repo-runtime span { display: flex; justify-content: center; gap: 4px; min-width: 0; white-space: nowrap; }
+    .repo-runtime b { overflow: hidden; color: var(--text); font: 650 9px/1 var(--data); text-overflow: ellipsis; white-space: nowrap; }
+    .review-alert {
+      position: absolute;
+      z-index: 8;
+      top: 14px;
+      right: 14px;
+      left: 14px;
+      margin: 0;
+      padding: 16px;
+      backdrop-filter: blur(12px);
+      background: rgba(48, 34, 10, .93);
+      box-shadow: 0 12px 48px rgba(0, 0, 0, .48), 0 0 28px rgba(240, 191, 104, .15);
+    }
+
+    .event.transcript {
+      overflow: hidden;
+      border: 1px solid rgba(50, 108, 108, .42);
+      border-left: 3px solid var(--blue);
+      background: linear-gradient(135deg, rgba(7, 25, 29, .97), rgba(2, 12, 14, .98));
+    }
+    .event.transcript[data-kind="claude"] { border-left-color: var(--claude); }
+    .event.transcript[data-kind="codex"] { border-left-color: var(--violet); }
+    .output-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 16px;
+      border-bottom: 1px solid rgba(83, 133, 132, .28);
+    }
+    .output-head strong { color: #edf9f6; font-size: 15px; font-weight: 820; }
+    .output-meta { color: var(--muted); font: 10px/1 var(--data); }
+    .output-state {
+      margin-left: auto;
+      padding: 5px 8px;
+      border: 1px solid currentColor;
+      font: 800 9px/1 var(--data);
+    }
+    .transcript[data-kind="claude"] .output-state { color: var(--claude); }
+    .transcript[data-kind="codex"] .output-state { color: var(--violet); }
+    .transcript[data-status="NEEDS_INPUT"] .output-state { color: var(--amber); }
+    .output-copy {
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: rgba(2, 8, 9, .78);
+      font-size: 10px;
+    }
+    .output-copy:hover, .output-copy:focus-visible { border-color: var(--line-hot); color: var(--ink); outline: none; }
+    .full-output {
+      margin: 0;
+      padding: 15px 17px 18px;
+      color: #c1d8d4;
+      font: 13px/1.68 var(--transcript);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: .005em;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 1600px) {
+      .header { grid-template-columns: minmax(350px, .82fr) minmax(0, 2.8fr); }
+      .task strong { font-size: 20px; }
+      .header-cell, .header-cell.model-cell { padding-inline: 12px; }
+      .header-cell label { font-size: 11px; }
+      .header-cell b { font-size: 14px; }
+      .state { font-size: 17px !important; }
+      .body { grid-template-columns: minmax(0, 1fr) 580px; }
+      .metric-value { font-size: 26px; }
+      .metric-sub { font-size: 10.5px; }
+      .full-output { font-size: 12.5px; line-height: 1.64; }
+    }
+
+    @media (max-width: 1180px) {
+      .shell { min-width: 1080px; height: 100vh; min-height: 700px; overflow: hidden; }
+      .header { grid-template-columns: 330px minmax(0, 1fr); }
+      .identity { min-height: 0; }
+      .header-grid { overflow: hidden; border-top: 0; }
+      .header-cell { min-height: 0; }
+      .body { height: auto; grid-template-columns: minmax(0, 1fr) 520px; }
+      .telemetry { height: auto; }
+      .stream-pane { height: auto; border-right: 1px solid var(--line); }
+      .inspector { height: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        scroll-behavior: auto !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true">
+    <defs>
+      <linearGradient id="chartArea" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#64e4d4" stop-opacity=".16"/>
+        <stop offset="1" stop-color="#64e4d4" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <main class="shell">
+    <header class="header">
+      <div class="identity">
+        <svg class="bridge-mark" viewBox="0 0 62 42" aria-label="Claude 与 Codex 双向桥接动态图标">
+          <defs>
+            <linearGradient id="bridgeOrbitTop" x1="5" y1="0" x2="57" y2="0">
+              <stop offset="0" stop-color="#f2a04b"/>
+              <stop offset=".5" stop-color="#d6b680"/>
+              <stop offset="1" stop-color="#64e4d4"/>
+            </linearGradient>
+            <linearGradient id="bridgeOrbitBottom" x1="57" y1="0" x2="5" y2="0">
+              <stop offset="0" stop-color="#a8fff3"/>
+              <stop offset=".5" stop-color="#64e4d4"/>
+              <stop offset="1" stop-color="#429dff"/>
+            </linearGradient>
+          </defs>
+          <path class="orbit top" pathLength="100" d="M7 10 C20 -1 42 -1 55 10"/>
+          <path class="orbit bottom" pathLength="100" d="M55 32 C42 43 20 43 7 32"/>
+          <path id="bridgeParticleLoop" class="orbit-loop" pathLength="100"
+                d="M7 10 C20 -1 42 -1 55 10 C62 15 62 27 55 32 C42 43 20 43 7 32 C0 27 0 15 7 10Z"/>
+          <circle class="node-halo claude" cx="14" cy="21" r="8.4"/>
+          <circle class="node-halo codex" cx="48" cy="21" r="8.4"/>
+          <g class="spoke">
+            <path d="M14 13.8v3.6M14 24.6v3.6M6.8 21h3.6M17.6 21h3.6M8.9 15.9l2.6 2.6M16.5 23.5l2.6 2.6M8.9 26.1l2.6-2.6M16.5 18.5l2.6-2.6"/>
+          </g>
+          <circle class="core claude" cx="14" cy="21" r="2.2"/>
+          <g class="codex-glyph">
+            <path d="M48 14.2c3.8 0 6.8 3 6.8 6.8 0 1.2-.3 2.4-.9 3.4l-3-1.7c.3-.5.5-1.1.5-1.7a3.4 3.4 0 0 0-3.4-3.4Z"/>
+            <path d="M53.9 24.4a6.8 6.8 0 0 1-9.3 2.5 7 7 0 0 1-2.5-2.5l3-1.7c.3.5.7.9 1.2 1.2a3.4 3.4 0 0 0 4.6-1.2Z"/>
+            <path d="M42.1 24.4a6.8 6.8 0 0 1 2.5-9.3 7 7 0 0 1 3.4-.9v3.4c-.6 0-1.2.2-1.7.5a3.4 3.4 0 0 0-1.2 4.6Z"/>
+          </g>
+          <circle class="core codex" cx="48" cy="21" r="1.25"/>
+          <path class="flow orange" pathLength="100" d="M23 18 C29 14 33 14 39 18"/>
+          <path class="flow cyan" pathLength="100" d="M39 24 C33 28 29 28 23 24"/>
+          <path class="flow orange" pathLength="100" d="M23 21 C29 18.5 33 23.5 39 21"/>
+          <path class="flow cyan" pathLength="100" d="M23 22.6 C29 25 33 17 39 19.4"/>
+          <circle class="particle orange" r="1.25">
+            <animateMotion dur="4.8s" repeatCount="indefinite">
+              <mpath href="#bridgeParticleLoop"/>
+            </animateMotion>
+          </circle>
+          <circle class="particle cyan" r="1.25">
+            <animateMotion dur="4.8s" begin="-2.4s" repeatCount="indefinite"
+                           keyPoints="1;0" keyTimes="0;1" calcMode="linear">
+              <mpath href="#bridgeParticleLoop"/>
+            </animateMotion>
+          </circle>
+        </svg>
+        <div class="task">
+          <strong id="workspaceName">桥接任务控制台</strong>
+          <span id="workspacePath">等待任务初始化</span>
+        </div>
+      </div>
+
+      <div class="header-grid">
+        <div class="header-cell status-cell"><label>状态</label><b class="state" id="status">初始化</b></div>
+        <div class="header-cell model-cell"><label>执行模型 · Claude</label><b class="model-live" id="claudeModel">—</b></div>
+        <div class="header-cell model-cell"><label>审查模型 · Codex</label><b class="model-live" id="codexModel">—</b></div>
+        <div class="header-cell"><label>自动压缩</label><b id="autocompact">—</b></div>
+        <div class="header-cell progress-cell"><label>实施 / 审查</label><b id="round">—</b></div>
+        <div class="header-cell"><label>运行时间</label><b id="elapsed">0秒</b></div>
+      </div>
+    </header>
+
+    <section class="body">
+      <section class="stream-pane">
+        <nav class="toolbar" aria-label="事件筛选">
+          <strong class="toolbar-title">实时交接流</strong>
+          <div class="tabs">
+            <button class="tab active" data-filter="all" type="button">全部</button>
+            <button class="tab" data-filter="claude" type="button">Claude</button>
+            <button class="tab" data-filter="tool" type="button">工具</button>
+            <button class="tab" data-filter="codex" type="button">Codex</button>
+            <button class="tab" data-filter="error" type="button">异常</button>
+          </div>
+          <label class="search-wrap">
+            <input class="search" id="search" type="search" placeholder="筛选事件、命令或结果">
+          </label>
+        </nav>
+        <div class="feed" id="feed" role="log" aria-live="polite"></div>
+        <footer class="feed-status">
+          <span id="eventCount">事件 0</span>
+          <span class="secure">脱敏已开启</span>
+          <span id="compactions">压缩 0 次</span>
+          <span class="connection" id="connection">连接中</span>
+        </footer>
+      </section>
+
+      <aside class="inspector">
+        <section class="telemetry" aria-label="实时运行指标">
+          <div class="telemetry-title"><strong>实时遥测</strong><span>3 秒采样 · 60 秒窗口</span></div>
+          <div class="telemetry-grid">
+            <article class="telemetry-item" data-series="context">
+              <div class="metric-head"><span>上下文</span><span id="contextSource">未知</span></div>
+              <div class="metric-value"><span id="contextValue">—</span><small>%</small></div>
+              <div class="metric-sub" id="contextSub">未收到 token 数据</div>
+              <svg class="metric-chart" viewBox="0 0 220 54" preserveAspectRatio="none">
+                <path class="grid" d="M0 18H220M0 36H220"/>
+                <path class="area"></path><path class="line"></path><circle class="point" r="2.2"></circle>
+              </svg>
+            </article>
+            <article class="telemetry-item" data-series="cost">
+              <div class="metric-head"><span>累计费用</span><span>美元</span></div>
+              <div class="metric-value" id="costValue">—</div>
+              <div class="metric-sub" id="costSub">本轮 —</div>
+              <svg class="metric-chart" viewBox="0 0 220 54" preserveAspectRatio="none">
+                <path class="grid" d="M0 18H220M0 36H220"/>
+                <path class="area"></path><path class="line"></path><circle class="point" r="2.2"></circle>
+              </svg>
+            </article>
+            <article class="telemetry-item" data-series="speed">
+              <div class="metric-head"><span>输出速度</span><span>API 平均</span></div>
+              <div class="metric-value"><span id="speedValue">—</span><small>tok/s</small></div>
+              <div class="metric-sub" id="speedSub">峰值 — · 每 3 秒采样</div>
+              <svg class="metric-chart" viewBox="0 0 220 54" preserveAspectRatio="none">
+                <path class="grid" d="M0 18H220M0 36H220"/>
+                <path class="area"></path><path class="line"></path><circle class="point" r="2.2"></circle>
+              </svg>
+            </article>
+            <article class="telemetry-item" data-series="tools">
+              <div class="metric-head"><span>工具活动</span><span>累计</span></div>
+              <div class="metric-value" id="toolsValue">0</div>
+              <div class="metric-sub" id="toolsSub">运行 0 · 失败 0</div>
+              <svg class="metric-chart" viewBox="0 0 220 54" preserveAspectRatio="none">
+                <path class="grid" d="M0 18H220M0 36H220"/>
+                <path class="area"></path><path class="line"></path><circle class="point" r="2.2"></circle>
+              </svg>
+            </article>
+            <article class="telemetry-item" data-series="memory">
+              <div class="metric-head"><span>Claude 内存</span><span>RSS</span></div>
+              <div class="metric-value"><span id="memoryValue">—</span><small>GB</small></div>
+              <div class="metric-sub" id="memorySub">系统 —</div>
+              <svg class="metric-chart" viewBox="0 0 220 54" preserveAspectRatio="none">
+                <path class="grid" d="M0 18H220M0 36H220"/>
+                <path class="area"></path><path class="line"></path><circle class="point" r="2.2"></circle>
+              </svg>
+            </article>
+            <article class="telemetry-item" data-series="cache">
+              <div class="metric-head"><span>提示缓存</span><span>剩余</span></div>
+              <div class="metric-value"><span id="cacheValue">—</span><small>秒</small></div>
+              <div class="metric-sub" id="cacheSub">未激活</div>
+              <svg class="metric-chart" viewBox="0 0 220 54" preserveAspectRatio="none">
+                <path class="grid" d="M0 18H220M0 36H220"/>
+                <path class="area"></path><path class="line"></path><circle class="point" r="2.2"></circle>
+              </svg>
+            </article>
+          </div>
+        </section>
+        <section class="section phase-panel">
+          <div class="section-title"><strong>执行阶段</strong></div>
+          <div id="phaseList"></div>
+        </section>
+        <section class="section tools-panel">
+          <div class="section-title"><strong>工具活动</strong><span>累计</span></div>
+          <div class="triple">
+            <div class="number"><b id="runningTools" style="color:var(--blue)">0</b><span>运行中</span></div>
+            <div class="number"><b id="completedTools" style="color:var(--green)">0</b><span>已完成</span></div>
+            <div class="number"><b id="failedTools" style="color:var(--red)">0</b><span>失败</span></div>
+          </div>
+        </section>
+        <section class="section control-panel" aria-label="Codex 审查控制">
+          <div class="section-title">
+            <strong>审查控制</strong><span id="controlState">连接中</span>
+          </div>
+          <div class="control-grid">
+            <label class="control-field">模型
+              <select class="control-select" id="controlModel" disabled></select>
+            </label>
+            <label class="control-field">推理
+              <select class="control-select" id="controlEffort" disabled></select>
+            </label>
+          </div>
+          <p class="control-effective" id="controlEffective">当前：等待控制通道</p>
+          <p class="control-note" id="controlMaxNote" hidden>最高：审核质量优先，通常消耗更多额度</p>
+          <p class="control-resume" id="controlResume" hidden>恢复：使用原 run 命令追加 --resume</p>
+          <div class="control-actions">
+            <button class="control-button" id="controlApply" type="button" disabled>应用到下次审核</button>
+            <button class="control-button stop" id="controlStop" type="button" disabled>终止任务</button>
+          </div>
+          <div class="control-confirmation" id="controlConfirmation" hidden>
+            <p id="controlConfirmationText"></p>
+            <div class="confirmation-actions">
+              <button class="control-button" id="controlConfirmYes" type="button">确认</button>
+              <button class="control-button" id="controlConfirmNo" type="button">取消</button>
+            </div>
+          </div>
+        </section>
+        <section class="section repo-section">
+          <div class="section-title"><strong>仓库状态</strong><span id="branch">—</span></div>
+          <div class="repo-metrics">
+            <div class="repo-metric"><span>变更文件</span><b id="changedFiles">—</b></div>
+            <div class="repo-metric add"><span>新增</span><b id="repoAdditions">—</b></div>
+            <div class="repo-metric del"><span>删除</span><b id="repoDeletions">—</b></div>
+          </div>
+          <div class="diff-bar"><span class="add" id="diffAdd"></span><span class="del" id="diffDel"></span></div>
+          <div class="files" id="files"></div>
+          <div class="repo-runtime">
+            <span>CC <b id="claudeVersion">—</b></span>
+            <span>规则 <b id="rulesCount">—</b></span>
+            <span>钩子 <b id="hooksCount">—</b></span>
+          </div>
+        </section>
+        <section class="review-alert" id="reviewAlert" aria-live="assertive">
+          <strong>等待用户审核</strong>
+          <p id="reviewQuestion">需要用户决定后才能继续。</p>
+          <p id="reviewReason"></p>
+          <ul id="reviewOptions"></ul>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <div class="toast" id="toast">已复制</div>
+
+  <script>
+    'use strict';
+    const byId = id => document.getElementById(id);
+    const elements = Object.fromEntries([
+      'workspaceName','workspacePath','status','claudeModel','codexModel',
+      'claudeVersion','autocompact','rulesCount','hooksCount','round','elapsed',
+      'contextSource','contextValue','contextSub','costValue','costSub',
+      'speedValue','speedSub','toolsValue','toolsSub','memoryValue','memorySub',
+      'cacheValue','cacheSub','search','feed','eventCount','compactions',
+      'connection','phaseList','runningTools','completedTools',
+      'failedTools','branch','changedFiles','repoAdditions','repoDeletions','diffAdd','diffDel',
+      'files','reviewAlert','reviewQuestion','reviewReason','reviewOptions','toast',
+      'controlState','controlModel','controlEffort','controlEffective',
+      'controlMaxNote','controlResume','controlApply','controlStop','controlConfirmation',
+      'controlConfirmationText','controlConfirmYes','controlConfirmNo'
+    ].map(id => [id, byId(id)]));
+
+    const eventRows = new Map();
+    const histories = Object.fromEntries(
+      ['context','cost','speed','tools','memory','cache'].map(name => [name, []])
+    );
+    let selectedKind = 'all';
+    let latestSnapshot = null;
+    let follow = true;
+    let controlToken = null;
+    let controlModels = [];
+    let latestControl = null;
+    let confirmationKind = null;
+    let source = null;
+
+    const finite = value => Number.isFinite(value);
+    const integer = value => Number.isInteger(value);
+    const text = (element, value) => { element.textContent = value; };
+    const count = value => integer(value) ? value.toLocaleString('zh-CN') : '—';
+    const tokens = value => {
+      if (!finite(value)) return '—';
+      if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+      if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+      return String(value);
+    };
+    const gb = value => finite(value) ? value / 1_073_741_824 : null;
+    const phaseLabel = phase => ({
+      INITIALIZING: '初始化',
+      CLAUDE_RUNNING: 'Claude 实施',
+      VERIFYING: '桥接验证',
+      VERIFICATION_FAILED: '验证失败',
+      CODEX_REVIEWING: 'Codex 审查',
+      CODEX_VALIDATING: '验证审查结论',
+      AWAITING_INPUT: '等待用户审核',
+      PASS: '已通过',
+      FAIL: '等待修正',
+      USER_STOPPING: '正在终止任务',
+      USER_STOPPED: '任务已终止',
+      STOPPED: '已停止'
+    })[phase] || phase || '未知';
+    const kindLabel = kind => ({
+      claude_text: 'Claude',
+      claude_init: 'Claude',
+      claude_result: 'Claude 结果',
+      claude_handoff: 'Claude → Codex',
+      tool_started: '命令工具',
+      tool_completed: '工具完成',
+      tool_failed: '工具失败',
+      compact: '自动压缩',
+      codex_started: 'Codex 审查',
+      codex_decision: 'Codex → Claude',
+      codex_handoff: 'Codex 修复指令',
+      task_passed: 'Codex 结论',
+      input_required: '需要审核',
+      phase: '桥接器'
+    })[kind] || '桥接器';
+    const commandStateLabel = kind => ({
+      tool_started: '正在执行',
+      tool_completed: '执行完成',
+      tool_failed: '执行失败'
+    })[kind] || '命令';
+    const eventKind = kind => {
+      if (kind === 'claude_text' || kind.startsWith('claude_')) return 'claude';
+      if (kind.startsWith('tool_')) return 'tool';
+      if (kind.startsWith('codex_') || kind === 'task_passed') return 'codex';
+      if (kind.includes('failed') || kind.includes('error')) return 'error';
+      return 'bridge';
+    };
+    const isHandoffKind = kind => (
+      kind === 'claude_handoff' || kind === 'codex_decision'
+    );
+    const stringList = value => Array.isArray(value)
+      ? value.filter(item => typeof item === 'string') : [];
+    const effortLabels = Object.freeze({high: '高', xhigh: '极高', max: '最高'});
+    const browserEffortOrder = Object.freeze(['max', 'xhigh', 'high']);
+
+    // CONTROL_STATE_HELPER_START
+    function formatControlModelLabel(displayName) {
+      const normalized = displayName.replace(
+        /^(GPT-\d+(?:\.\d+)+)-/, '$1 ');
+      return `⚡ ${normalized}`;
+    }
+
+    function controlButtonState(control) {
+      const stopped = control.stopped === true || control.phase === 'USER_STOPPED';
+      const stopping = control.stop_requested === true
+        || control.phase === 'USER_STOPPING';
+      const reviewing = control.phase === 'CODEX_REVIEWING';
+      const restartUsed = reviewing && control.restart_used === true;
+      let statusLabel = reviewing ? '审核中，可切换一次' : '可应用到下次审核';
+      if (restartUsed) statusLabel = '本轮切换次数已用完';
+      if (stopping) statusLabel = '正在终止任务';
+      if (stopped) statusLabel = '任务已终止';
+      return {
+        applyLabel: reviewing ? '立即重启审核' : '应用到下次审核',
+        applyDisabled: stopped || stopping || restartUsed,
+        stopDisabled: stopped || stopping,
+        statusLabel
+      };
+    }
+    // CONTROL_STATE_HELPER_END
+
+    function showToast(message) {
+      text(elements.toast, message);
+      elements.toast.classList.add('show');
+      setTimeout(() => elements.toast.classList.remove('show'), 1000);
+    }
+
+    function replaceSelectOptions(select, options, selectedValue) {
+      select.replaceChildren();
+      for (const optionValue of options) {
+        const option = document.createElement('option');
+        option.value = optionValue.value;
+        text(option, optionValue.label);
+        select.append(option);
+      }
+      if (options.some(option => option.value === selectedValue)) {
+        select.value = selectedValue;
+      }
+    }
+
+    function selectedControlModel() {
+      return controlModels.find(
+        model => model.slug === elements.controlModel.value);
+    }
+
+    function syncControlEfforts(preferred) {
+      const model = selectedControlModel();
+      const supported = model && Array.isArray(model.reasoning_efforts)
+        ? model.reasoning_efforts : [];
+      const efforts = browserEffortOrder.filter(value => supported.includes(value));
+      replaceSelectOptions(
+        elements.controlEffort,
+        efforts.map(value => ({value, label: effortLabels[value] || value})),
+        preferred,
+      );
+      elements.controlMaxNote.hidden = elements.controlEffort.value !== 'max';
+    }
+
+    function renderControl(control) {
+      if (!control || typeof control !== 'object') return;
+      latestControl = control;
+      const state = controlButtonState(control);
+      text(elements.controlState, state.statusLabel);
+      text(elements.controlApply, state.applyLabel);
+      const unavailable = !controlToken || !controlModels.length;
+      elements.controlApply.disabled = unavailable || state.applyDisabled;
+      elements.controlStop.disabled = unavailable || state.stopDisabled;
+      elements.controlModel.disabled = unavailable || state.applyDisabled;
+      elements.controlEffort.disabled = unavailable || state.applyDisabled;
+      const effective = control.effective && typeof control.effective === 'object'
+        ? control.effective : null;
+      const pending = control.pending && typeof control.pending === 'object'
+        ? control.pending : null;
+      const effectiveLabel = effective
+        ? `${effective.model} · ${effortLabels[effective.effort] || effective.effort}`
+        : '未知';
+      const pendingLabel = pending
+        ? ` → ${pending.model} · ${effortLabels[pending.effort] || pending.effort}`
+        : '';
+      text(elements.controlEffective, `当前：${effectiveLabel}${pendingLabel}`);
+      elements.controlMaxNote.hidden = elements.controlEffort.value !== 'max';
+      const stopped = control.stopped === true || control.phase === 'USER_STOPPED';
+      document.body.classList.toggle('user-stopped', stopped);
+      elements.controlResume.hidden = !stopped;
+      if (stopped) {
+        elements.controlConfirmation.hidden = true;
+        confirmationKind = null;
+        if (source) source.close();
+        text(elements.connection, '任务已终止');
+        elements.connection.style.color = 'var(--red)';
+      }
+    }
+
+    async function loadControlBootstrap() {
+      try {
+        const response = await fetch('/control/bootstrap', {
+          cache: 'no-store', credentials: 'same-origin'
+        });
+        if (!response.ok) throw new Error('bootstrap');
+        const payload = await response.json();
+        if (typeof payload.token !== 'string' || !Array.isArray(payload.models)) {
+          throw new Error('bootstrap');
+        }
+        controlToken = payload.token;
+        controlModels = payload.models.filter(model => (
+          model && typeof model.slug === 'string'
+          && typeof model.display_name === 'string'
+          && Array.isArray(model.reasoning_efforts)
+        ));
+        const selected = payload.control && (
+          payload.control.pending || payload.control.effective);
+        replaceSelectOptions(
+          elements.controlModel,
+          controlModels.map(model => ({
+            value: model.slug,
+            label: formatControlModelLabel(model.display_name),
+          })),
+          selected && selected.model,
+        );
+        syncControlEfforts(selected && selected.effort);
+        renderControl(payload.control || {});
+      } catch {
+        text(elements.controlState, '控制通道不可用');
+        text(elements.controlEffective, '当前：仅可查看');
+      }
+    }
+
+    async function postControl(path, payload) {
+      if (!controlToken) return;
+      try {
+        const response = await fetch(path, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Bridge-Control-Token': controlToken,
+          },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          showToast(typeof result.error === 'string'
+            ? result.error : '操作未执行');
+          return;
+        }
+        if (result.control) renderControl(result.control);
+        showToast(path.endsWith('/stop')
+          ? '终止请求已发送' : '审查配置已更新');
+      } catch {
+        showToast('控制连接已中断');
+      }
+    }
+
+    function showControlConfirmation(kind) {
+      confirmationKind = kind;
+      const activeReview = latestControl
+        && latestControl.phase === 'CODEX_REVIEWING';
+      text(
+        elements.controlConfirmationText,
+        kind === 'stop'
+          ? '将终止本任务正在运行的 Claude、Codex 或验证进程；文件和日志会保留。'
+          : activeReview
+            ? '当前 Codex 审核会立即中止，并在同一会话中按新配置重启；本轮仅可切换一次。'
+            : '新配置将在下一次 Codex 审核开始时生效。',
+      );
+      elements.controlConfirmation.hidden = false;
+    }
+
+    async function applyControlSelection() {
+      await postControl('/control/review-config', {
+        model: elements.controlModel.value,
+        effort: elements.controlEffort.value,
+      });
+    }
+
+    function applyFilters() {
+      const needle = elements.search.value.trim().toLowerCase();
+      for (const row of eventRows.values()) {
+        const kindMatch = selectedKind === 'all' || row.dataset.kind === selectedKind;
+        const textMatch = !needle || row.textContent.toLowerCase().includes(needle);
+        row.classList.toggle('hidden', !(kindMatch && textMatch));
+      }
+    }
+
+    function createEventRow(item) {
+      const row = document.createElement('article');
+      row.className = 'event';
+      row.dataset.sequence = String(item.sequence);
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const name = document.createElement('strong');
+      const at = document.createElement('span');
+      const streaming = document.createElement('span');
+      streaming.className = 'streaming';
+      streaming.textContent = '正在输出';
+      meta.append(name, at, streaming);
+      const message = document.createElement('div');
+      message.className = 'message';
+      const command = document.createElement('div');
+      command.className = 'command';
+      command.hidden = true;
+      const commandName = document.createElement('b');
+      commandName.textContent = '正在执行';
+      const commandText = document.createElement('pre');
+      command.append(commandName, commandText);
+      commandText.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(commandText.textContent);
+          showToast('命令已复制');
+        } catch {
+          showToast('浏览器阻止复制');
+        }
+      });
+      row.append(meta, message, command);
+      row._parts = {name, at, message, command, commandName, commandText};
+      return row;
+    }
+
+    function codexDecisionText(item) {
+      const details = item.details && typeof item.details === 'object'
+        ? item.details : {};
+      const status = typeof details.status === 'string' ? details.status : '未知';
+      const evidence = stringList(details.evidence);
+      const issues = stringList(details.remaining_issues);
+      const lines = [
+        `状态：${status}`,
+        '',
+        '审核证据：',
+        ...(evidence.length ? evidence : ['无']).map(value => `- ${value}`),
+        '',
+        '剩余问题：',
+        ...(issues.length ? issues : ['无']).map(value => `- ${value}`),
+        '',
+        '给 Claude 的指令：',
+        status === 'PASS'
+          ? '无后续修复指令'
+          : (typeof details.next_instructions === 'string'
+              ? details.next_instructions : ''),
+      ];
+      if (status === 'NEEDS_INPUT') {
+        lines.push(
+          '', '需要用户回答：',
+          typeof details.question === 'string' ? details.question : '',
+          '', '暂停原因：',
+          typeof details.reason === 'string' ? details.reason : '',
+          '', '选项：',
+          ...stringList(details.options).map(value => `- ${value}`),
+        );
+      }
+      return lines.join('\n');
+    }
+
+    function handoffCopyText(item) {
+      const details = item.details && typeof item.details === 'object'
+        ? item.details : {};
+      const attempt = integer(details.attempt) ? details.attempt : '—';
+      if (item.kind === 'claude_handoff') {
+        return `Claude → Codex · 第 ${attempt} 轮\n\n${item.message || ''}`;
+      }
+      return `Codex → Claude · 第 ${attempt} 轮\n\n${codexDecisionText(item)}`;
+    }
+
+    function createHandoffRow(item) {
+      const row = document.createElement('article');
+      row.className = 'event transcript';
+      row.dataset.sequence = String(item.sequence);
+      const heading = document.createElement('header');
+      heading.className = 'output-head';
+      const title = document.createElement('strong');
+      const meta = document.createElement('span');
+      meta.className = 'output-meta';
+      const status = document.createElement('span');
+      status.className = 'output-state';
+      const copy = document.createElement('button');
+      copy.className = 'output-copy';
+      copy.type = 'button';
+      copy.textContent = '复制完整内容';
+      heading.append(title, meta, status, copy);
+      const output = document.createElement('pre');
+      output.className = 'full-output';
+      row.append(heading, output);
+      row._parts = {title, meta, status, output};
+      copy.addEventListener('click', async event => {
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(handoffCopyText(row._handoffItem));
+          showToast('完整交接内容已复制');
+        } catch {
+          showToast('浏览器阻止复制');
+        }
+      });
+      return row;
+    }
+
+    function updateHandoffRow(row, item) {
+      const details = item.details && typeof item.details === 'object'
+        ? item.details : {};
+      const attempt = integer(details.attempt) ? details.attempt : 0;
+      const isClaude = item.kind === 'claude_handoff';
+      const status = isClaude
+        ? 'REPORT'
+        : (typeof details.status === 'string' ? details.status : 'UNKNOWN');
+      row._handoffItem = item;
+      row.dataset.kind = isClaude ? 'claude' : 'codex';
+      row.dataset.outputRole = isClaude ? 'claude' : 'codex';
+      row.dataset.status = status;
+      row.dataset.level = item.level || 'info';
+      text(
+        row._parts.title,
+        isClaude ? 'Claude 完整输出' : 'Codex 完整审查输出',
+      );
+      text(
+        row._parts.meta,
+        `第 ${attempt || '—'} 轮 · ${item.elapsed_display || '—'} · 本轮唯一副本`,
+      );
+      text(row._parts.status, isClaude ? '已完成' : status);
+      row._parts.status.dataset.status = status;
+      text(
+        row._parts.output,
+        isClaude ? (item.message || '') : codexDecisionText(item),
+      );
+    }
+
+    function upsertEvent(item) {
+      if (!integer(item.sequence)) return;
+      let row = eventRows.get(item.sequence);
+      if (row && isHandoffKind(item.kind) && !row.classList.contains('transcript')) {
+        const replacement = createHandoffRow(item);
+        row.replaceWith(replacement);
+        row = replacement;
+        eventRows.set(item.sequence, row);
+      }
+      if (!row) {
+        row = isHandoffKind(item.kind) ? createHandoffRow(item) : createEventRow(item);
+        eventRows.set(item.sequence, row);
+        elements.feed.append(row);
+      }
+      if (isHandoffKind(item.kind)) {
+        updateHandoffRow(row, item);
+        return;
+      }
+      const details = item.details && typeof item.details === 'object' ? item.details : {};
+      row.dataset.kind = eventKind(item.kind || '');
+      row.dataset.level = item.level || 'info';
+      row.classList.toggle('is-streaming', details.streaming === true);
+      text(row._parts.name, kindLabel(item.kind || ''));
+      text(row._parts.at, `+${item.elapsed_display || '—'}`);
+      text(row._parts.message, item.message || '');
+      text(row._parts.commandName, commandStateLabel(item.kind || ''));
+      if (typeof details.command === 'string' && details.command) {
+        row._parts.command.hidden = false;
+        text(row._parts.commandText, details.command);
+      } else {
+        row._parts.command.hidden = true;
+      }
+    }
+
+    function renderEvents(items) {
+      for (const item of items || []) upsertEvent(item);
+      while (eventRows.size > 1000) {
+        const first = eventRows.keys().next().value;
+        eventRows.get(first)?.remove();
+        eventRows.delete(first);
+      }
+      text(elements.eventCount, `事件 ${eventRows.size}`);
+      applyFilters();
+      if (follow) elements.feed.scrollTop = elements.feed.scrollHeight;
+    }
+
+    function renderChart(card, values) {
+      if (!values.length) return;
+      const width = 220;
+      const height = 54;
+      const top = 7;
+      const bottom = 50;
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const span = Math.max(max - min, .0001);
+      const points = values.map((value, index) => [
+        index * width / Math.max(values.length - 1, 1),
+        bottom - ((value - min) / span) * (bottom - top)
+      ]);
+      const line = points.map(([x, y], index) =>
+        `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+      card.querySelector('.line').setAttribute('d', line);
+      card.querySelector('.area').setAttribute('d', `${line} L${width} ${height} L0 ${height} Z`);
+      const [lastX, lastY] = points.at(-1);
+      card.querySelector('.point').setAttribute('cx', lastX);
+      card.querySelector('.point').setAttribute('cy', lastY);
+    }
+
+    function sampleTelemetry() {
+      if (!latestSnapshot) return;
+      const claude = latestSnapshot.claude || {};
+      const tools = latestSnapshot.tools || {};
+      const samples = {
+        context: finite(claude.context_percent) ? claude.context_percent : null,
+        cost: finite(claude.total_cost_usd) ? claude.total_cost_usd : null,
+        speed: finite(claude.output_tokens_per_second) ? claude.output_tokens_per_second : null,
+        tools: integer(tools.completed) ? tools.completed : null,
+        memory: gb(claude.rss_bytes),
+        cache: integer(claude.prompt_cache_remaining_seconds)
+          ? claude.prompt_cache_remaining_seconds : null
+      };
+      for (const card of document.querySelectorAll('[data-series]')) {
+        const name = card.dataset.series;
+        const value = samples[name];
+        if (!finite(value)) continue;
+        histories[name].push(value);
+        if (histories[name].length > 20) histories[name].shift();
+        renderChart(card, histories[name]);
+      }
+    }
+    setInterval(sampleTelemetry, 3000);
+
+    function renderPhases(snapshot) {
+      let terminal = 'PASS';
+      if (snapshot.phase === 'AWAITING_INPUT') terminal = 'AWAITING_INPUT';
+      if (snapshot.phase === 'USER_STOPPING') terminal = 'USER_STOPPING';
+      if (snapshot.phase === 'USER_STOPPED') terminal = 'USER_STOPPED';
+      const order = [
+        'INITIALIZING', 'CLAUDE_RUNNING', 'VERIFYING',
+        'CODEX_REVIEWING', terminal,
+      ];
+      const current = order.includes(snapshot.phase) ? order.indexOf(snapshot.phase) : 0;
+      elements.phaseList.replaceChildren();
+      order.forEach((phase, index) => {
+        const row = document.createElement('div');
+        row.className = `phase-row ${index < current ? 'past' : ''} ${index === current ? 'current' : ''}`;
+        row.dataset.phase = phase;
+        const dot = document.createElement('i');
+        const label = document.createElement('b');
+        text(label, phaseLabel(phase));
+        row.append(dot, label);
+        elements.phaseList.append(row);
+      });
+    }
+
+    function renderRepository(git) {
+      text(elements.branch, git.available ? (git.branch || 'detached') : '不可用');
+      text(elements.changedFiles, git.available ? count(git.changed_files) : '—');
+      text(elements.repoAdditions, git.available ? `+${count(git.additions)}` : '—');
+      text(elements.repoDeletions, git.available ? `−${count(git.deletions)}` : '—');
+      const additions = integer(git.additions) ? git.additions : 0;
+      const deletions = integer(git.deletions) ? git.deletions : 0;
+      const total = additions + deletions;
+      elements.diffAdd.style.width = `${total ? additions * 100 / total : 0}%`;
+      elements.diffDel.style.width = `${total ? deletions * 100 / total : 0}%`;
+      elements.files.replaceChildren();
+      const paths = Array.isArray(git.paths) ? git.paths.slice(0, 5) : [];
+      if (!paths.length) {
+        const line = document.createElement('div');
+        line.className = 'file';
+        const mark = document.createElement('b');
+        const value = document.createElement('span');
+        text(mark, '·');
+        text(value, git.available ? '工作区无变更' : '等待 Git 采样');
+        line.append(mark, value);
+        elements.files.append(line);
+        return;
+      }
+      for (const path of paths) {
+        const line = document.createElement('div');
+        line.className = 'file';
+        const mark = document.createElement('b');
+        const value = document.createElement('span');
+        text(mark, '~');
+        text(value, path);
+        line.append(mark, value);
+        elements.files.append(line);
+      }
+    }
+
+    function renderReview(snapshot) {
+      const awaiting = snapshot.phase === 'AWAITING_INPUT'
+        && snapshot.awaiting_input
+        && typeof snapshot.awaiting_input === 'object';
+      document.body.classList.toggle('awaiting-input', Boolean(awaiting));
+      if (!awaiting) return;
+      text(elements.reviewQuestion, snapshot.awaiting_input.question || '需要用户决定后才能继续。');
+      text(elements.reviewReason, snapshot.awaiting_input.reason || '');
+      elements.reviewOptions.replaceChildren();
+      for (const option of snapshot.awaiting_input.options || []) {
+        const item = document.createElement('li');
+        text(item, option);
+        elements.reviewOptions.append(item);
+      }
+    }
+
+    function flashModel(element, value) {
+      if (element.textContent !== value && element.textContent !== '—') {
+        element.classList.add('changed');
+        setTimeout(() => element.classList.remove('changed'), 900);
+      }
+      text(element, value);
+    }
+
+    function render(snapshot) {
+      latestSnapshot = snapshot;
+      document.body.dataset.phase = snapshot.phase || '';
+      const bridge = snapshot.bridge || {};
+      const workspace = snapshot.workspace || {};
+      const claude = snapshot.claude || {};
+      const codex = snapshot.codex || {};
+      const tools = snapshot.tools || {};
+      const memory = snapshot.memory || {};
+      const config = snapshot.configuration || {};
+      const compact = snapshot.compaction || {};
+      const git = snapshot.git || {};
+      const control = snapshot.control && typeof snapshot.control === 'object'
+        ? snapshot.control : null;
+      const maxRounds = integer(bridge.max_rounds) ? bridge.max_rounds : null;
+      const implementationAttempts = integer(bridge.implementation_attempts)
+        ? bridge.implementation_attempts : 0;
+      const maxImplementationAttempts = integer(bridge.max_implementation_attempts)
+        ? bridge.max_implementation_attempts : null;
+      const codexReviews = integer(bridge.codex_reviews) ? bridge.codex_reviews : 0;
+      const maxCodexReviews = integer(bridge.max_codex_reviews)
+        ? bridge.max_codex_reviews : maxRounds;
+      const progress = `实施 ${implementationAttempts}`
+        + (maxImplementationAttempts ? `/${maxImplementationAttempts}` : '')
+        + ` · 审查 ${codexReviews}`
+        + (maxCodexReviews ? `/${maxCodexReviews}` : '');
+
+      text(elements.workspaceName, `${workspace.name || '桥接任务'} · 实时监控`);
+      text(elements.workspacePath, workspace.path || '等待任务初始化');
+      text(elements.status, phaseLabel(snapshot.phase));
+      flashModel(elements.claudeModel, claude.model || bridge.claude_model || '—');
+      const effective = control && control.effective
+        ? control.effective : null;
+      const codexName = (effective && effective.model)
+        || bridge.codex_model || codex.model || '继承 CLI 配置';
+      const rawEffort = (effective && effective.effort)
+        || bridge.codex_reasoning_effort;
+      const effort = rawEffort
+        ? ` · ${effortLabels[rawEffort] || rawEffort}` : '';
+      flashModel(elements.codexModel, codexName + effort);
+      text(elements.claudeVersion, claude.version || '—');
+      text(elements.autocompact, bridge.autocompact_threshold
+        ? `${bridge.autocompact_threshold}%` : '—');
+      text(elements.rulesCount, config.available ? count(config.rules) : '—');
+      text(elements.hooksCount, config.available ? count(config.hooks) : '—');
+      text(elements.round, progress);
+      text(elements.elapsed, snapshot.elapsed_display || '—');
+
+      const context = finite(claude.context_percent) ? claude.context_percent : null;
+      text(elements.contextValue, context === null ? '—' : context.toFixed(1));
+      text(elements.contextSub,
+        `${tokens(claude.context_used_tokens)} / ${tokens(claude.context_window_tokens)}`
+        + (bridge.autocompact_threshold ? ` · ${bridge.autocompact_threshold}% 自动压缩` : ''));
+      text(elements.contextSource, ({
+        configured: '配置值',
+        claude_reported: 'Claude 已确认',
+        unknown: '未知'
+      })[claude.context_window_source] || '未知');
+      text(elements.costValue, finite(claude.total_cost_usd)
+        ? `$${claude.total_cost_usd.toFixed(4)}` : '—');
+      text(elements.costSub, finite(claude.round_cost_usd)
+        ? `本轮 +$${claude.round_cost_usd.toFixed(4)}` : '本轮 —');
+      text(elements.speedValue, finite(claude.output_tokens_per_second)
+        ? claude.output_tokens_per_second.toFixed(1) : '—');
+      text(elements.speedSub, finite(claude.output_tokens_peak_per_second)
+        ? `峰值 ${claude.output_tokens_peak_per_second.toFixed(1)} · 每 3 秒采样`
+        : '峰值 — · 每 3 秒采样');
+      text(elements.toolsValue, count(tools.completed));
+      text(elements.toolsSub,
+        `运行 ${count((tools.running || []).length)} · 失败 ${count(tools.failed)}`);
+      const rss = gb(claude.rss_bytes);
+      text(elements.memoryValue, rss === null ? '—' : rss.toFixed(2));
+      const hostUsed = gb(memory.host_used_bytes);
+      const hostTotal = gb(memory.host_total_bytes);
+      text(elements.memorySub, hostUsed !== null && hostTotal !== null
+        ? `系统 ${hostUsed.toFixed(1)} / ${hostTotal.toFixed(1)} GB` : '系统 —');
+      text(elements.cacheValue, integer(claude.prompt_cache_remaining_seconds)
+        ? String(claude.prompt_cache_remaining_seconds) : '—');
+      text(elements.cacheSub, integer(claude.prompt_cache_remaining_seconds)
+        ? '有效' : '未激活');
+
+      text(elements.runningTools, count((tools.running || []).length));
+      text(elements.completedTools, count(tools.completed));
+      text(elements.failedTools, count(tools.failed));
+      text(elements.compactions, `压缩 ${count(compact.count)} 次`);
+      renderPhases(snapshot);
+      renderRepository(git);
+      renderReview(snapshot);
+      if (control) renderControl(control);
+      renderEvents(snapshot.events);
+      if (!Object.values(histories).some(values => values.length)) {
+        sampleTelemetry();
+      }
+    }
+
+    for (const tab of document.querySelectorAll('.tab')) {
+      tab.addEventListener('click', () => {
+        for (const item of document.querySelectorAll('.tab')) item.classList.remove('active');
+        tab.classList.add('active');
+        selectedKind = tab.dataset.filter;
+        applyFilters();
+      });
+    }
+    elements.search.addEventListener('input', applyFilters);
+    elements.feed.addEventListener('scroll', () => {
+      const distance = elements.feed.scrollHeight - elements.feed.scrollTop - elements.feed.clientHeight;
+      follow = distance < 40;
+    });
+    elements.controlModel.addEventListener('change', () => {
+      syncControlEfforts(null);
+    });
+    elements.controlEffort.addEventListener('change', () => {
+      elements.controlMaxNote.hidden = elements.controlEffort.value !== 'max';
+    });
+    elements.controlApply.addEventListener('click', () => {
+      if (!latestControl) return;
+      if (latestControl.phase === 'CODEX_REVIEWING') {
+        showControlConfirmation('apply');
+      } else {
+        applyControlSelection();
+      }
+    });
+    elements.controlStop.addEventListener('click', () => {
+      showControlConfirmation('stop');
+    });
+    elements.controlConfirmNo.addEventListener('click', () => {
+      confirmationKind = null;
+      elements.controlConfirmation.hidden = true;
+    });
+    elements.controlConfirmYes.addEventListener('click', async () => {
+      const action = confirmationKind;
+      confirmationKind = null;
+      elements.controlConfirmation.hidden = true;
+      if (action === 'stop') {
+        await postControl('/control/stop', {});
+      } else if (action === 'apply') {
+        await applyControlSelection();
+      }
+    });
+
+    source = new EventSource('/events');
+    source.addEventListener('open', () => {
+      text(elements.connection, '实时连接');
+      elements.connection.style.color = 'var(--green)';
+    });
+    source.addEventListener('snapshot', event => {
+      try { render(JSON.parse(event.data)); } catch { /* retain the last valid frame */ }
+    });
+    source.addEventListener('error', () => {
+      if (latestControl && latestControl.stopped === true) return;
+      text(elements.connection, '已结束 / 重连中');
+      elements.connection.style.color = 'var(--amber)';
+    });
+    loadControlBootstrap();
+  </script>
+</body>
+</html>

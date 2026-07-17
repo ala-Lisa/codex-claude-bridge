@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Claude Bridge"
+  short_description: "在 WSL 中流式协调 Claude 实施与 Codex 审查"
+  default_prompt: "Use $codex-claude-bridge to coordinate an approved Claude implementation with native WSL Codex review, automatic loopback browser monitoring, explicit model controls, bounded rounds, and safe human-input pauses."
