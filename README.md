@@ -1,96 +1,73 @@
+---
+name: codex-claude-bridge
+description: Coordinate repository work where Codex plans and reviews while Claude Code backed by DeepSeek implements. Use to automate their handoffs without copy-paste. Require explicit approval of the repository-specific task, plan, and verification commands, then run until PASS, AWAITING_INPUT, USER_STOPPED, or a safety stop.
+---
+
 # Codex Claude Bridge
 
-Coordinate **Codex** as technical lead/reviewer and **Claude Code** as implementer through their local CLIs — no manual copy-paste between tools.
+Use Codex as the read-only technical lead and Claude as the implementer.
 
-## How it works
+## Approve before running
 
+1. Inspect the repository, relevant code and tests, `git status`, and current diff.
+2. Write a scoped task, implementation plan, success conditions, stop conditions, and credential-free verification manifest.
+3. Present all inputs to the user.
+4. Run the bridge only after the user explicitly approves this repository-specific work.
+
+Never treat approval of the bridge itself as approval of a coding task.
+
+Use argument arrays in the verification manifest; never infer commands from prose or use shell operators:
+
+```json
+{"version":1,"commands":[["python3","-m","pytest","-q"],["git","diff","--check"]]}
 ```
-Plan ──▶ Codex approves plan ──▶ Claude implements ──▶ Manifest checks pass?
-                                                              │
-                                              ┌─ YES ──▶ Codex review
-                                              │              │
-                                              │    ┌─ PASS ──▶ Done
-                                              │    ├─ FAIL ──▶ Back to Claude
-                                              │    └─ NEEDS_INPUT ──▶ Pause for human
-                                              │
-                                              └─ NO  ──▶ Back to Claude (no Codex call)
-```
 
-1. You approve a **repository-specific implementation plan** (hard gate — never starts without it).
-2. Claude implements; the bridge runs your **verification manifest** after each attempt.
-3. Only when manifest checks pass does Codex review the diff. Codex `FAIL` sends targeted corrections back to Claude. Codex `PASS` ends the task.
-4. Safety bounds (`--max-implementation-attempts`, `--max-codex-reviews`) prevent runaway loops.
-
-## Quick start
+## Run
 
 ```bash
-# 1. Write an approved plan
-# 2. Write a verification manifest (credential-free JSON)
-# 3. Run the bridge:
-python3 ~/.codex/skills/codex-claude-bridge/scripts/bridge.py run \
-  --repo /path/to/repo \
-  --task-file /path/to/task.md \
-  --plan-file /path/to/approved-plan.md \
-  --verification-file /path/to/verification.json \
-  --approved \
-  --max-implementation-attempts 12 \
-  --max-codex-reviews 8
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/codex-claude-bridge/scripts/bridge.py" run \
+  --repo /absolute/repo \
+  --task-file /absolute/task.md \
+  --plan-file /absolute/plan.md \
+  --verification-file /absolute/verification.json \
+  --approved
 ```
 
-## Live monitor
+The bridge loops automatically:
 
-A browser-based HUD shows Claude/Codex activity in real time — single-screen Chinese console with event tape, telemetry wall, and review controls. Terminal stream and sanitized JSONL remain available as fallback.
+```text
+Claude -> verification -> Codex -> PASS
+              |             |
+              +-- failure --+-> Claude
+                            +-> NEEDS_INPUT -> AWAITING_INPUT
+```
+
+Verification failure returns directly to the same Claude session. Codex `FAIL` returns targeted corrections to Claude. Only Codex can return `PASS`.
+
+## Observe and resume
 
 ```bash
-# Headless mode
---no-monitor
-
-# Serve without opening browser
---no-open-browser
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/codex-claude-bridge/scripts/bridge.py" status \
+  --repo /absolute/repo
 ```
 
-## Key safety rules
+Resume an interrupted or user-stopped run by repeating the original command with `--resume`.
 
-- Codex review is **read-only** (never writes code)
-- Never commits, pushes, or alters git history
-- Never logs credentials or copies API keys into prompts
-- Preserves unrelated changes; stops on ambiguous overlap
+For `AWAITING_INPUT`, answer the displayed question in a credential-free file, then repeat the original command with:
 
-## Outcomes
-
-| Status | Meaning |
-|--------|---------|
-| `PASS` | Codex confirmed success conditions satisfied |
-| `FAIL` | Codex returned targeted corrections → back to Claude |
-| `VERIFICATION_FAILED` | Manifest command failed → back to Claude (no Codex) |
-| `AWAITING_INPUT` | Codex needs a human decision → bridge paused |
-| `USER_STOPPED` | Browser stop control terminated the loop |
-| `STOPPED` | Safety limit reached or fatal error |
-
-## Repository structure
-
-```
-├── SKILL.md              # Full skill definition and instructions
-├── scripts/
-│   ├── bridge.py         # Main bridge orchestrator
-│   ├── monitor.py        # Browser-based live monitor
-│   └── control.py        # Loopback control surface
-├── assets/
-│   └── monitor.html      # Monitor frontend
-├── references/           # Design docs and implementation plans
-├── tests/                # Test suite
-└── agents/               # Agent configuration
+```text
+--resume --user-answer-file /absolute/answer.md
 ```
 
-## Resuming and status
+Reuse both saved model sessions. Never resume `AWAITING_INPUT` without an answer.
 
-```bash
-# Check state
-python3 ~/.codex/skills/codex-claude-bridge/scripts/bridge.py status --repo /path/to/repo
+## Safety
 
-# Resume interrupted run
-python3 ... --resume
+- Keep Codex read-only.
+- Never bypass permissions, grant broad Bash access, commit, push, merge, or alter Git history.
+- Never put credentials in prompts, manifests, answers, state, or logs.
+- Refuse a dirty worktree unless the user explicitly authorizes `--allow-dirty`; preserve all unrelated changes.
+- Stop on ambiguous scope, missing authority, invalid output, exhausted bounds, or unsafe overlap.
+- Report checks that did not run as unverified.
 
-# Resume after AWAITING_INPUT (requires answer file)
-python3 ... --resume --user-answer-file /path/to/answer.md
-```
+Use `bridge.py run --help` for options. Read [references/protocol.md](references/protocol.md) only when diagnosing a stopped run, changing the protocol, or reviewing security-sensitive behavior.
